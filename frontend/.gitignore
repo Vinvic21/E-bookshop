@@ -31,3 +31,9 @@ pyenv/
 *.njsproj
 *.sln
 *.sw?
+backend/venv/
+backend/.venv/
+frontend/node_modules/
+node_modules/
+*.log
+.DS_Store
