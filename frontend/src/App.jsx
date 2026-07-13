@@ -30,6 +30,8 @@ import Resale      from "./pages/Resale";
 import AdminAnalytics from "./pages/AdminAnalytics";
 import SchoolAdmin from "./pages/SchoolAdmin";
 import MyInstallments from "./pages/MyInstallments";
+import MyOrders from "./pages/MyOrders";
+import AdminDeliveries from "./pages/AdminDeliveries";
 
 import { GLOBAL_STYLES } from "./theme";
 
@@ -104,6 +106,16 @@ function AppShell() {
 
       case "my-installments":
         return <MyInstallments onNavigate={navigate} />;
+
+      case "my-orders":
+        return <MyOrders onNavigate={navigate} />;
+
+      case "deliveries":
+        return (
+          <AuthGuard requireAdmin onNavigate={navigate}>
+            <AdminDeliveries />
+          </AuthGuard>
+        );
 
       default:
         return (

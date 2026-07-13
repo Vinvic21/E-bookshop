@@ -211,6 +211,11 @@ def init_db():
         cur.execute("ALTER TABLE users ADD COLUMN phone TEXT")
         conn.commit()
 
+    existing_order_cols = [r[1] for r in cur.execute("PRAGMA table_info(orders)").fetchall()]
+    if "delivery_status" not in existing_order_cols:
+        cur.execute("ALTER TABLE orders ADD COLUMN delivery_status TEXT DEFAULT 'pending'")
+        conn.commit()
+
     if fresh:
         for name, email, password, role in SEED_USERS:
             cur.execute(
@@ -555,6 +560,17 @@ def mpesa_stkpush(user):
     return jsonify({"ref": ref, "checkout_id": checkout_id, "total": total}), 201
 
 
+def complete_installment_order_if_done(db, plan_id):
+    remaining = db.execute(
+        "SELECT COUNT(*) AS c FROM installment_payments WHERE plan_id = ? AND status != 'paid'", (plan_id,)
+    ).fetchone()["c"]
+    if remaining == 0:
+        plan = db.execute("SELECT * FROM installment_plans WHERE id = ?", (plan_id,)).fetchone()
+        if plan:
+            db.execute("UPDATE orders SET status = 'paid' WHERE id = ?", (plan["order_id"],))
+            db.execute("UPDATE installment_plans SET status = 'completed' WHERE id = ?", (plan_id,))
+
+
 @app.get("/api/mpesa/status/<checkout_id>")
 def mpesa_status(checkout_id):
     db = get_db()
@@ -569,6 +585,8 @@ def mpesa_status(checkout_id):
         def on_result(s):
             db.execute("UPDATE installment_payments SET status=?, paid_at=? WHERE id=?",
                        (s, datetime.utcnow().isoformat() if s == "paid" else None, inst["id"]))
+            if s == "paid":
+                complete_installment_order_if_done(db, inst["plan_id"])
         return resolve_stk_status(checkout_id, inst["status"], on_result, f"installment #{inst['seq']}", inst["amount"])
 
     sav = db.execute("SELECT * FROM savings_transactions WHERE mpesa_checkout_id = ?", (checkout_id,)).fetchone()
@@ -616,7 +634,12 @@ def mpesa_callback():
         status = "paid" if stk.get("ResultCode") == 0 else "failed"
         db = get_db()
         db.execute("UPDATE orders SET status=? WHERE mpesa_checkout_id=?", (status, checkout_id))
-        db.execute("UPDATE installment_payments SET status=? WHERE mpesa_checkout_id=?", (status, checkout_id))
+        inst = db.execute("SELECT * FROM installment_payments WHERE mpesa_checkout_id=?", (checkout_id,)).fetchone()
+        if inst:
+            db.execute("UPDATE installment_payments SET status=?, paid_at=? WHERE id=?",
+                       (status, datetime.utcnow().isoformat() if status == "paid" else None, inst["id"]))
+            if status == "paid":
+                complete_installment_order_if_done(db, inst["plan_id"])
         sav = db.execute("SELECT * FROM savings_transactions WHERE mpesa_checkout_id=?", (checkout_id,)).fetchone()
         if sav and sav["status"] not in ("paid", "failed"):
             db.execute("UPDATE savings_transactions SET status=? WHERE id=?", (status, sav["id"]))
@@ -638,6 +661,37 @@ def list_orders(user):
         rows = db.execute("SELECT * FROM orders ORDER BY id DESC").fetchall()
     else:
         rows = db.execute("SELECT * FROM orders WHERE user_id = ? ORDER BY id DESC", (user["id"],)).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+VALID_DELIVERY_STATUSES = {"pending", "delivered", "cancelled"}
+
+
+@app.put("/api/orders/<int:order_id>/delivery")
+@login_required
+def update_delivery_status(user, order_id):
+    db = get_db()
+    order = db.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+    if not order:
+        return jsonify({"error": "Order not found."}), 404
+    if order["user_id"] != user["id"] and user["role"] != "admin":
+        return jsonify({"error": "Not allowed."}), 403
+    data = request.get_json(force=True) or {}
+    new_status = data.get("delivery_status")
+    if new_status not in VALID_DELIVERY_STATUSES:
+        return jsonify({"error": f"delivery_status must be one of {sorted(VALID_DELIVERY_STATUSES)}."}), 400
+    db.execute("UPDATE orders SET delivery_status = ? WHERE id = ?", (new_status, order_id))
+    db.commit()
+    return jsonify({"ok": True, "delivery_status": new_status})
+
+
+@app.get("/api/orders/pending-deliveries")
+@admin_required
+def pending_deliveries(user):
+    db = get_db()
+    rows = db.execute(
+        "SELECT * FROM orders WHERE status IN ('paid','placed') AND delivery_status = 'pending' ORDER BY created_at",
+    ).fetchall()
     return jsonify([dict(r) for r in rows])
 
 

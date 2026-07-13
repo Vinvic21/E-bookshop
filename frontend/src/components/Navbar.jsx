@@ -138,10 +138,12 @@ export default function Navbar({ currentPage, onNavigate, onCartOpen }) {
           {link("savings",  "🐷 Savings")}
           {link("resale",   "♻️ Resell")}
           {user && link("my-installments", "💳 Installments")}
+          {user && link("my-orders", "📬 My Orders")}
           {link("about",    "About")}
           {isAdmin && link("add-products", "➕ Add Products", "admin-link")}
           {isAdmin && link("school-admin", "🏫 Manage Schools", "admin-link")}
           {isAdmin && link("analytics", "📊 Insights", "admin-link")}
+          {isAdmin && link("deliveries", "🚚 Deliveries", "admin-link")}
         </div>
 
         <div className="nav-right">
